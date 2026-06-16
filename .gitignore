@@ -1,0 +1,5 @@
+/target
+/models
+.env
+*.log
+.DS_Store

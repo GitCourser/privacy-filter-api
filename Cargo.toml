@@ -1,0 +1,37 @@
+[package]
+name = "privacy-filter-api"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+dotenvy = "0.15"
+flate2 = "1"
+indicatif = "0.18"
+ndarray = { version = "0.17", features = ["std"] }
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "copy-dylibs", "download-binaries", "ndarray", "tls-rustls", "api-24"] }
+reqwest = { version = "0.13", features = ["blocking", "json", "rustls", "system-proxy"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tar = "0.4"
+thiserror = "2"
+tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tower-http = { version = "0.6", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+zip = "2"
+
+[dev-dependencies]
+temp-env = "0.3"
+tempfile = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
