@@ -47,7 +47,7 @@ cargo run --release -- --host 0.0.0.0 --port 8080 --onnx-variant fp32  # 源码
 docker build -t privacy-filter-api .
 
 # 拉取镜像
-docker pull ghcr.io/GitCourser/privacy-filter-api
+docker pull ghcr.io/gitcourser/privacy-filter-api
 
 # 启动
 docker run -d \
@@ -57,7 +57,7 @@ docker run -d \
   -e ONNX_VARIANT=fp32 \
   --restart unless-stopped \
   --name privacy-filter-api \
-  ghcr.io/GitCourser/privacy-filter-api
+  ghcr.io/gitcourser/privacy-filter-api
 ```
 
 ## 配置
