@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use std::fs;
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, anyhow};
@@ -8,6 +10,76 @@ use tokenizers::Tokenizer;
 use crate::config::Config;
 use crate::entity::Entity;
 use crate::model_download::resolve_model_files;
+
+/// 记录当前进程内存使用情况，用于排查 OOM killer。
+fn log_memory_usage(stage: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        let (current, max) = cgroup_memory_stats();
+        match (current, max) {
+            (Some(cur), Some(mx)) => {
+                tracing::warn!(
+                    stage = stage,
+                    cgroup_current_mb = cur / 1024 / 1024,
+                    cgroup_limit_mb = mx / 1024 / 1024,
+                    usage_pct = format!("{:.1}%", cur as f64 / mx as f64 * 100.0),
+                    "memory usage"
+                );
+            }
+            (Some(cur), None) => {
+                tracing::warn!(
+                    stage = stage,
+                    cgroup_current_mb = cur / 1024 / 1024,
+                    cgroup_limit_mb = "unlimited",
+                    "memory usage"
+                );
+            }
+            _ => {
+                tracing::debug!(stage = stage, "cgroup memory stats not available");
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = stage;
+    }
+}
+
+/// 读取 cgroup v2/v1 内存用量与限制，返回 (current_bytes, max_bytes)。
+/// 无法读取时对应字段返回 None。仅在 Linux 上编译。
+#[cfg(target_os = "linux")]
+fn cgroup_memory_stats() -> (Option<u64>, Option<u64>) {
+    let current = fs::read_to_string("/sys/fs/cgroup/memory.current")
+        .ok()
+        .or_else(|| fs::read_to_string("/sys/fs/cgroup/memory/memory.usage_in_bytes").ok())
+        .and_then(|s| s.trim().parse::<u64>().ok());
+
+    let max = fs::read_to_string("/sys/fs/cgroup/memory.max")
+        .ok()
+        .and_then(|s| {
+            let s = s.trim();
+            if s == "max" {
+                None
+            } else {
+                s.parse::<u64>().ok()
+            }
+        })
+        .or_else(|| {
+            fs::read_to_string("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+                .ok()
+                .and_then(|s| {
+                    let s = s.trim();
+                    // cgroup v1 中 9223372036854771712 表示无限制
+                    if s == "9223372036854771712" {
+                        None
+                    } else {
+                        s.parse::<u64>().ok()
+                    }
+                })
+        });
+
+    (current, max)
+}
 
 pub const ID2LABEL: [&str; 33] = [
     "O",
@@ -168,6 +240,11 @@ impl PrivacyFilterModel {
             return Ok(Vec::new());
         }
 
+        tracing::info!(
+            token_count = token_ids.len(),
+            "inference: tokenize completed"
+        );
+
         let input_ids = Array2::from_shape_vec((1, token_ids.len()), token_ids)
             .context("failed to build input_ids tensor")?;
         let attention_mask = Array2::<i64>::ones((1, input_ids.len_of(Axis(1))));
@@ -179,10 +256,16 @@ impl PrivacyFilterModel {
             .session
             .as_mut()
             .ok_or_else(|| anyhow!("model session is not loaded"))?;
+
+        log_memory_usage("before ONNX session.run");
+        tracing::info!("inference: starting ONNX session.run");
         let outputs = session.run(ort::inputs![
             "input_ids" => input_ids_tensor,
             "attention_mask" => attention_mask_tensor,
         ])?;
+        tracing::info!("inference: ONNX session.run completed");
+        log_memory_usage("after ONNX session.run");
+
         let first = outputs
             .values()
             .next()
@@ -253,13 +336,24 @@ impl PrivacyFilterModel {
         })?;
         tracing::info!("tokenizer loaded");
 
+        log_memory_usage("before ONNX session load");
+
         tracing::info!("creating ONNX Runtime session builder");
-        let mut builder = Session::builder()?;
+        let mut builder = Session::builder()
+            .map_err(|e| anyhow!("failed to create ONNX session builder: {e}"))?;
+        builder = builder
+            .with_intra_threads(1)
+            .map_err(|e| anyhow!("failed to set intra threads: {e}"))?;
+        builder = builder
+            .with_inter_threads(1)
+            .map_err(|e| anyhow!("failed to set inter threads: {e}"))?;
         tracing::info!(onnx = %files.onnx_path.display(), "loading ONNX model");
         let session = builder
             .commit_from_file(&files.onnx_path)
             .with_context(|| format!("failed to load ONNX model {}", files.onnx_path.display()))?;
         tracing::info!("ONNX model loaded");
+
+        log_memory_usage("after ONNX session load");
 
         let input_names = session
             .inputs()

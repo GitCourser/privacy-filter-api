@@ -12,6 +12,7 @@ pub const DEFAULT_ONNX_VARIANT: &str = "quantized";
 pub const DEFAULT_MODEL_DIR: &str = "./models";
 pub const DEFAULT_MODEL_CHECK: bool = true;
 pub const DEFAULT_MAX_TOKENS: usize = 128000;
+pub const DEFAULT_OMP_NUM_THREADS: usize = 1;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -47,6 +48,10 @@ struct CliArgs {
     /// 单次推理最大 token 数；对应 .env 配置 MAX_TOKENS
     #[arg(long)]
     max_tokens: Option<usize>,
+
+    /// ONNX Runtime OpenMP 线程数；默认 1；对应 .env 配置 OMP_NUM_THREADS
+    #[arg(long)]
+    omp_num_threads: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +64,7 @@ pub struct Config {
     pub model_dir: PathBuf,
     pub model_check: bool,
     pub max_tokens: usize,
+    pub omp_num_threads: usize,
 }
 
 impl Config {
@@ -94,6 +100,10 @@ impl Config {
             Some(max_tokens) => max_tokens,
             None => parse_env("MAX_TOKENS", DEFAULT_MAX_TOKENS)?,
         };
+        let omp_num_threads = match args.omp_num_threads {
+            Some(omp_num_threads) => omp_num_threads,
+            None => parse_env("OMP_NUM_THREADS", DEFAULT_OMP_NUM_THREADS)?,
+        };
 
         Ok(Self {
             host,
@@ -104,6 +114,7 @@ impl Config {
             model_dir,
             model_check,
             max_tokens,
+            omp_num_threads,
         })
     }
 
@@ -149,7 +160,7 @@ where
 mod tests {
     use super::*;
 
-    fn clear_env() -> [(String, Option<String>); 8] {
+    fn clear_env() -> [(String, Option<String>); 9] {
         [
             ("HOST".to_string(), None),
             ("PORT".to_string(), None),
@@ -159,6 +170,7 @@ mod tests {
             ("MODEL_DIR".to_string(), None),
             ("MODEL_CHECK".to_string(), None),
             ("MAX_TOKENS".to_string(), None),
+            ("OMP_NUM_THREADS".to_string(), None),
         ]
     }
 
@@ -175,6 +187,7 @@ mod tests {
             assert_eq!(config.model_dir, PathBuf::from(DEFAULT_MODEL_DIR));
             assert_eq!(config.model_check, DEFAULT_MODEL_CHECK);
             assert_eq!(config.max_tokens, DEFAULT_MAX_TOKENS);
+            assert_eq!(config.omp_num_threads, DEFAULT_OMP_NUM_THREADS);
             assert!(!config.auth_enabled());
         });
     }
@@ -191,6 +204,7 @@ mod tests {
                 ("MODEL_DIR", Some("./env-models")),
                 ("MODEL_CHECK", Some("false")),
                 ("MAX_TOKENS", Some("1024")),
+                ("OMP_NUM_THREADS", Some("2")),
             ],
             || {
                 let config = Config::from_cli_args(CliArgs::parse_from([
@@ -211,6 +225,8 @@ mod tests {
                     "true",
                     "--max-tokens",
                     "2048",
+                    "--omp-num-threads",
+                    "4",
                 ]))
                 .unwrap();
 
@@ -222,6 +238,7 @@ mod tests {
                 assert_eq!(config.model_dir, PathBuf::from("./cli-models"));
                 assert!(config.model_check);
                 assert_eq!(config.max_tokens, 2048);
+                assert_eq!(config.omp_num_threads, 4);
             },
         );
     }

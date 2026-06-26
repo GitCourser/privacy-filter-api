@@ -30,7 +30,18 @@ struct GitHubAsset {
     browser_download_url: String,
 }
 
-pub fn configure_onnx_runtime() -> Result<()> {
+pub fn configure_onnx_runtime(omp_num_threads: usize) -> Result<()> {
+    // Microsoft 预编译的 ONNX Runtime 使用 OpenMP 线程池。
+    // ort 的 with_intra_threads 对 OpenMP 无效，必须通过 OMP_NUM_THREADS 环境变量控制。
+    // 容器中 lscpu 可能看到数百核，但 cpuset 只允许少数核，
+    // OpenMP 会按可见核数创建线程（每线程默认 8MB 栈），导致内存暴涨被 OOM Killer 杀死。
+    let omp_value = omp_num_threads.to_string();
+    // SAFETY: 单线程初始化阶段，ONNX Runtime 尚未加载，不会有并发访问环境变量。
+    unsafe {
+        env::set_var("OMP_NUM_THREADS", &omp_value);
+    }
+    tracing::info!(omp_num_threads = omp_num_threads, "set OMP_NUM_THREADS");
+
     let dylib_path = match find_bundled_onnx_runtime() {
         Some(path) => path,
         None => download_onnx_runtime()?,
